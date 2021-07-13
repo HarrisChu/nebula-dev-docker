@@ -1,0 +1,105 @@
+ARG VERSION=7
+
+FROM centos:${VERSION}
+
+ENV TZ=Asia/Shanghai
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+ENV LANG=en_US.utf8
+
+RUN yum update -y && yum install -y epel-release \
+  && yum install -y \
+    autoconf \
+    curl \
+    curl-devel \
+    expat-devel \
+    gettext \
+    glibc-devel \
+    glibc-headers \
+    m4 \
+    make \
+    ncurses-devel \
+    openldap-devel \
+    openssh-clients \
+    openssl-devel \
+    # for lcov
+    perl-JSON \
+    perl-PerlIO-gzip \
+    perl-Digest-MD5 \
+    python3-devel \
+    python3-pip \
+    readline-devel \
+    redhat-lsb-core \
+    rpm-build \
+    sudo \
+    unzip \
+    vim \
+    wget \
+    xz \
+    zlib-devel \
+# client
+    libatomic \
+  && yum clean all \
+  && rm -rf /var/cache/yum
+
+RUN if [ "x${VERSION}" != "x8" ]; then yum install -y centos-release-scl; fi
+
+WORKDIR /root
+
+# Install cmake 3.15
+RUN mkdir -p /opt/vesoft/toolset/cmake \
+  && curl -fsSL https://github.com/Kitware/CMake/releases/download/v3.20.1/cmake-3.20.1-linux-aarch64.tar.gz -O \
+  && tar zxf cmake*.tar.gz -C /opt/vesoft/toolset/cmake --strip-components=1 \
+  && rm -rf cmake*.tar.gz
+
+ENV PATH=/opt/vesoft/toolset/cmake/bin:/opt/vesoft/toolset/clang/9.0.0/bin:${PATH}
+ENV CCACHE_CPP2=1
+ENV CC=/opt/vesoft/toolset/clang/9.0.0/bin/gcc
+ENV CXX=/opt/vesoft/toolset/clang/9.0.0/bin/g++
+ENV GCOV=/opt/vesoft/toolset/clang/9.0.0/bin/gcov
+
+SHELL ["/bin/bash", "-c"]
+
+# Install gcc and llvm by nebula-gears
+RUN bash <(curl -s https://raw.githubusercontent.com/vesoft-inc/nebula-gears/master/install) --prefix=/opt/vesoft/ \
+  && /opt/vesoft/bin/install-llvm --version=9.0.0 \
+  && ln -snf /opt/vesoft/toolset/clang/9.0.0/bin/llvm-symbolizer /usr/bin/llvm-symbolizer
+
+# Install git 2.25
+RUN wget -qO- https://github.com/git/git/archive/v2.25.0.tar.gz | tar zxf - -C ./ \
+  && cd git-2.25.0 \
+  && make configure \
+  && ./configure --prefix=/usr \
+  && make -j$(nproc) && make install \
+  && cd ../ && rm -rf git-2.25.0
+
+# Install nebula third-party 1.0
+RUN git clone --depth 1 --branch master https://github.com/vesoft-inc/nebula.git \
+  && ./nebula/third-party/install-third-party.sh \
+  && rm -rf nebula
+
+# Install nebula third-party 2.0
+RUN git clone --depth 1 --branch master https://github.com/vesoft-inc/nebula-third-party.git \
+    && ./nebula-third-party/install-third-party.sh \
+    && rm -rf nebula-third-party
+
+# Install ccache
+RUN wget -qO- https://github.com/ccache/ccache/releases/download/v3.7.7/ccache-3.7.7.tar.gz | tar zxf - -C ./ \
+  && cd ccache-3.7.7 \
+  && ./configure \
+  && make -j \
+  && make install \
+  && cd ../ && rm -rf ccache-*
+
+# Install lcov to /usr/local/bin, require master to make gcc9 happy
+RUN git clone --branch=master --single-branch https://github.com/linux-test-project/lcov.git \
+  && cd lcov && git checkout 75fbae1cfc5027f818a0bb865bf6f96fab3202da \
+  && make install && cd ../ && rm -rf lcov
+
+# fastcov
+RUN if [ "x${VERSION}" == "x7" ]; then pip3 install --no-cache-dir fastcov; fi
+
+# Install ossutil64
+RUN wget -q http://gosspublic.alicdn.com/ossutil/1.6.10/ossutil64 \
+  && mv ossutil64 /usr/bin/ \
+  && chmod +x /usr/bin/ossutil64
